@@ -3,60 +3,72 @@ set -euo pipefail
 
 MODEL_DIR="${MODEL_DIR:-/workspace/models}"
 
-MODEL_FILE="Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q6_K_P.gguf"
-DRAFT_FILE="Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-FastMTP-32K.gguf"
+MODEL_FILE="${MODEL_FILE:-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q6_K_P.gguf}"
+DRAFT_FILE="${DRAFT_FILE:-Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-FastMTP-32K.gguf}"
 
 MODEL="${MODEL_DIR}/${MODEL_FILE}"
 DRAFT="${MODEL_DIR}/${DRAFT_FILE}"
 
 REPO="HauhauCS/Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-MTP-GGUF"
 
+CTX_SIZE="${CTX_SIZE:-262144}"
+DEPTH="${MTP_DEPTH:-3}"
+PORT="${PORT:-8000}"
+
 mkdir -p "${MODEL_DIR}"
 
-echo "============================================"
-echo " Qwen3.8 27B HauhauCS FastMTP"
-echo " Target: Q6_K_P"
-echo " Context: 262144"
-echo " FastMTP depth: 3"
-echo "============================================"
+echo "================================================"
+echo " Qwen3.8-27B HauhauCS Aggressive FastMTP"
+echo "================================================"
+echo "Model:       ${MODEL_FILE}"
+echo "Draft:       ${DRAFT_FILE}"
+echo "Context:     ${CTX_SIZE}"
+echo "MTP depth:   ${DEPTH}"
+echo "Port:        ${PORT}"
+echo "================================================"
 
 download_file() {
     local filename="$1"
     local destination="$2"
 
-    if [ -f "${destination}" ]; then
-        echo "Already downloaded: ${filename}"
+    if [ -s "${destination}" ]; then
+        echo "[OK] ${filename} already exists"
         return
     fi
 
-    echo "Downloading ${filename}..."
+    echo "[DOWNLOAD] ${filename}"
+
+    rm -f "${destination}.tmp"
+
+    CURL_ARGS=(
+        -fL
+        --retry 5
+        --retry-delay 5
+        --connect-timeout 30
+    )
 
     if [ -n "${HF_TOKEN:-}" ]; then
-        curl -fL \
-            --retry 5 \
-            --retry-delay 5 \
-            -H "Authorization: Bearer ${HF_TOKEN}" \
-            -o "${destination}.tmp" \
-            "https://huggingface.co/${REPO}/resolve/main/${filename}"
-    else
-        curl -fL \
-            --retry 5 \
-            --retry-delay 5 \
-            -o "${destination}.tmp" \
-            "https://huggingface.co/${REPO}/resolve/main/${filename}"
+        CURL_ARGS+=(
+            -H
+            "Authorization: Bearer ${HF_TOKEN}"
+        )
     fi
+
+    curl "${CURL_ARGS[@]}" \
+        -o "${destination}.tmp" \
+        "https://huggingface.co/${REPO}/resolve/main/${filename}"
 
     mv "${destination}.tmp" "${destination}"
 
-    echo "Downloaded ${filename}"
+    echo "[OK] Download complete"
 }
 
 download_file "${MODEL_FILE}" "${MODEL}"
 download_file "${DRAFT_FILE}" "${DRAFT}"
 
-echo ""
-echo "Starting llama-server..."
-echo ""
+echo
+echo "Starting patched llama-server..."
+echo
 
 exec /opt/llama/bin/llama-server \
     --model "${MODEL}" \
@@ -64,9 +76,9 @@ exec /opt/llama/bin/llama-server \
     --spec-draft-model "${DRAFT}" \
     --spec-draft-ngl all \
     --spec-type draft-mtp \
-    --spec-draft-n-max 3 \
+    --spec-draft-n-max "${DEPTH}" \
     --spec-draft-p-min 0 \
-    --ctx-size 262144 \
+    --ctx-size "${CTX_SIZE}" \
     --parallel 1 \
     --batch-size 2048 \
     --ubatch-size 512 \
@@ -86,4 +98,4 @@ exec /opt/llama/bin/llama-server \
     --reasoning-preserve \
     --reasoning-format deepseek \
     --host 0.0.0.0 \
-    --port 8000
+    --port "${PORT}"
